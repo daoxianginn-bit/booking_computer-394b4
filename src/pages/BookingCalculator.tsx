@@ -71,11 +71,20 @@ export default function BookingCalculator() {
   const [newPackage, setNewPackage] = useState<{ occupancy: number; roomIds: string[] }>({ occupancy: 10, roomIds: [] });
 
   const [quoteDate, setQuoteDate] = useState('');
-  const [quoteHeadcount, setQuoteHeadcount] = useState(4);
-  const [quoteNights, setQuoteNights] = useState(1);
+  const [quoteCheckoutDate, setQuoteCheckoutDate] = useState('');
+  const [quoteHeadcountInput, setQuoteHeadcountInput] = useState('');
   const [quotePromotionId, setQuotePromotionId] = useState<string>('');
   const [quoteCleaningOption, setQuoteCleaningOption] = useState<'cleaning' | 'noCleaning'>('noCleaning');
   const [quoteResult, setQuoteResult] = useState<MultiNightQuoteResult | null>(null);
+
+  // 晚數完全由入住/退房日期算出來，不開放手動輸入，避免跟日期兜不起來。
+  const quoteNights = (() => {
+    if (!quoteDate || !quoteCheckoutDate) return 0;
+    const inD = new Date(`${quoteDate}T00:00:00`);
+    const outD = new Date(`${quoteCheckoutDate}T00:00:00`);
+    const diff = Math.round((outD.getTime() - inD.getTime()) / 86400000);
+    return diff > 0 ? diff : 0;
+  })();
 
   useEffect(() => {
     applyData(loadData());
@@ -243,10 +252,19 @@ export default function BookingCalculator() {
     if (quotePromotionId === id) setQuotePromotionId('');
   };
 
-  // ---------------- 測試報價 ----------------
+  // ---------------- 試算報價 ----------------
   const runTestQuote = () => {
-    if (!quoteDate) {
-      alert('請選擇入住日期');
+    if (!quoteDate || !quoteCheckoutDate) {
+      alert('請選擇入住日期與退房日期');
+      return;
+    }
+    if (quoteNights <= 0) {
+      alert('退房日期需晚於入住日期');
+      return;
+    }
+    const headcount = Number(quoteHeadcountInput);
+    if (!quoteHeadcountInput || Number.isNaN(headcount) || headcount <= 0) {
+      alert('請輸入人數');
       return;
     }
     const maxOccupancy = packages.length ? Math.max(...packages.map((p) => p.occupancy)) : 0;
@@ -255,7 +273,7 @@ export default function BookingCalculator() {
     const result = computeMultiNightQuote({
       checkInDate: new Date(`${quoteDate}T00:00:00`),
       nights: quoteNights,
-      headcount: quoteHeadcount,
+      headcount,
       dateRanges: dateRanges.map((d) => ({ range_type: d.range_type, start_date: d.start_date, end_date: d.end_date })),
       roomTypes,
       roomPricing,
@@ -269,6 +287,18 @@ export default function BookingCalculator() {
       peakSeasonWeekdayTier,
     });
     setQuoteResult(result);
+  };
+
+  // 試算結果每一晚實際套用了哪個優惠：第一晚看促銷方案，第二晚起看連住折扣（依畫面目前選的打掃選項）。
+  const nightDiscountLabel = (index: number, rawPrice: number | null): string => {
+    if (rawPrice == null) return '—';
+    if (index === 0) {
+      const promo = promotions.find((p) => p.id === quotePromotionId);
+      return promo ? `促銷：${promo.name}（${promo.discount_percent}% 折扣）` : '無優惠';
+    }
+    const perNight = quoteCleaningOption === 'cleaning' ? discountCleaning : discountNoCleaning;
+    const cleaningLabel = quoteCleaningOption === 'cleaning' ? '需打掃' : '無需打掃';
+    return perNight > 0 ? `連住折扣・${cleaningLabel}（折抵 NT$${perNight.toLocaleString()}）` : '無優惠';
   };
 
   // ---------------- 自動報價總表 ----------------
@@ -837,12 +867,30 @@ export default function BookingCalculator() {
             <input type="date" value={quoteDate} onChange={(e) => setQuoteDate(e.target.value)} className="px-3 py-2 border rounded-lg" />
           </div>
           <div>
-            <label className="block text-xs text-gray-500 mb-1">人數</label>
-            <input type="number" min={1} value={quoteHeadcount} onChange={(e) => setQuoteHeadcount(Number(e.target.value))} className="w-20 px-3 py-2 border rounded-lg" />
+            <label className="block text-xs text-gray-500 mb-1">退房日期</label>
+            <input
+              type="date"
+              value={quoteCheckoutDate}
+              onChange={(e) => setQuoteCheckoutDate(e.target.value)}
+              min={quoteDate || undefined}
+              className="px-3 py-2 border rounded-lg"
+            />
           </div>
           <div>
-            <label className="block text-xs text-gray-500 mb-1">晚數</label>
-            <input type="number" min={1} value={quoteNights} onChange={(e) => setQuoteNights(Math.max(1, Number(e.target.value)))} className="w-20 px-3 py-2 border rounded-lg" />
+            <label className="block text-xs text-gray-500 mb-1">晚數（自動計算）</label>
+            <div className="w-20 px-3 py-2 border rounded-lg bg-gray-50 text-gray-600 text-center">
+              {quoteNights > 0 ? `${quoteNights} 晚` : '—'}
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">人數</label>
+            <input
+              type="number"
+              value={quoteHeadcountInput}
+              onChange={(e) => setQuoteHeadcountInput(e.target.value)}
+              className="w-20 px-3 py-2 border rounded-lg"
+              placeholder="請輸入"
+            />
           </div>
           <div>
             <label className="block text-xs text-gray-500 mb-1">促銷方案</label>
@@ -872,11 +920,12 @@ export default function BookingCalculator() {
                 <h4 className="font-semibold text-gray-700 mb-2">個別租房</h4>
                 <div className="text-sm space-y-1">
                   {quoteResult.individual.nights.map((n, i) => (
-                    <div key={i} className="flex justify-between">
+                    <div key={i} className="flex justify-between gap-2">
                       <span>
                         {n.date.toLocaleDateString('zh-TW')}（{n.tier}）{i === 0 ? '　第一晚' : `　第${i + 1}晚`}
+                        <span className="block text-xs text-gray-400">{nightDiscountLabel(i, n.rawPrice)}</span>
                       </span>
-                      <span>{n.discountedPrice == null ? '不可用' : `NT$ ${n.discountedPrice.toLocaleString()}`}</span>
+                      <span className="whitespace-nowrap">{n.discountedPrice == null ? '不可用' : `NT$ ${n.discountedPrice.toLocaleString()}`}</span>
                     </div>
                   ))}
                   <div className="flex justify-between font-bold border-t pt-1 mt-1">
@@ -893,11 +942,12 @@ export default function BookingCalculator() {
                 ) : (
                   <div className="text-sm space-y-1">
                     {quoteResult.wholeHouse.nights.map((n, i) => (
-                      <div key={i} className="flex justify-between">
+                      <div key={i} className="flex justify-between gap-2">
                         <span>
                           {n.date.toLocaleDateString('zh-TW')}（{n.tier}）{i === 0 ? '　第一晚' : `　第${i + 1}晚`}
+                          <span className="block text-xs text-gray-400">{nightDiscountLabel(i, n.rawPrice)}</span>
                         </span>
-                        <span>{n.discountedPrice == null ? '不可用' : `NT$ ${n.discountedPrice.toLocaleString()}`}</span>
+                        <span className="whitespace-nowrap">{n.discountedPrice == null ? '不可用' : `NT$ ${n.discountedPrice.toLocaleString()}`}</span>
                       </div>
                     ))}
                     <div className="flex justify-between font-bold border-t pt-1 mt-1">
