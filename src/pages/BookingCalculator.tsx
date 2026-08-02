@@ -70,6 +70,8 @@ export default function BookingCalculator() {
   const [promotions, setPromotions] = useState<any[]>([]);
 
   const [newRange, setNewRange] = useState({ range_type: '旺季', start_date: '', end_date: '', label: '' });
+  const [importYearInput, setImportYearInput] = useState(String(new Date().getFullYear()));
+  const [importingHolidays, setImportingHolidays] = useState(false);
   const [newPackage, setNewPackage] = useState<{ occupancy: number; roomIds: string[] }>({ occupancy: 10, roomIds: [] });
 
   const [quoteDate, setQuoteDate] = useState('');
@@ -237,6 +239,52 @@ export default function BookingCalculator() {
 
   const updateDateRange = (id: string, field: string, value: any) => {
     setDateRanges(dateRanges.map((d) => (d.id === id ? { ...d, [field]: value } : d)));
+  };
+
+  // 匯入國家連假行事曆：資料來源為 TaiwanCalendar（社群整理的政府行政機關辦公日曆表 JSON），
+  // 依規定政府每年 6/30 前（特殊情形 8/31 前）會公告次年行事曆，所以通常 5、6 月後就能匯入明年的連假。
+  // 把連續放假日分組成一段一段區間，只留有假期名稱的那幾段（純週末六日不匯入，交給預設平日/小假日邏輯處理）。
+  const importHolidayCalendar = async () => {
+    const year = Number(importYearInput);
+    if (!year || year < 2000 || year > 2100) {
+      alert('請輸入有效的西元年份，例如 2027');
+      return;
+    }
+    setImportingHolidays(true);
+    try {
+      const res = await fetch(`https://cdn.jsdelivr.net/gh/ruyut/TaiwanCalendar/data/${year}.json`);
+      if (!res.ok) throw new Error('查無這個年份的資料，可能政府尚未公告，或年份輸入錯誤');
+      const data: { date: string; isHoliday: boolean; description: string }[] = await res.json();
+
+      const runs: { start: string; end: string; labels: string[] }[] = [];
+      let current: { start: string; end: string; labels: string[] } | null = null;
+      for (const day of data) {
+        const iso = `${day.date.slice(0, 4)}-${day.date.slice(4, 6)}-${day.date.slice(6, 8)}`;
+        if (day.isHoliday) {
+          if (!current) current = { start: iso, end: iso, labels: [] };
+          current.end = iso;
+          if (day.description && !current.labels.includes(day.description)) current.labels.push(day.description);
+        } else if (current) {
+          runs.push(current);
+          current = null;
+        }
+      }
+      if (current) runs.push(current);
+
+      const namedRuns = runs.filter((r) => r.labels.length > 0);
+      const toAdd = namedRuns
+        .filter((run) => !dateRanges.some((d) => d.range_type === '連假' && d.start_date === run.start && d.end_date === run.end))
+        .map((run) => ({ id: newId(), range_type: '連假', start_date: run.start, end_date: run.end, label: run.labels.join('、') }));
+
+      if (toAdd.length) {
+        setDateRanges([...dateRanges, ...toAdd].sort((a, b) => a.start_date.localeCompare(b.start_date)));
+      }
+      alert(`匯入完成：新增 ${toAdd.length} 筆連假區間，${namedRuns.length - toAdd.length} 筆已存在略過。`);
+    } catch (err: any) {
+      alert(`匯入失敗：${err.message || '無法取得資料'}`);
+    } finally {
+      setImportingHolidays(false);
+    }
   };
 
   const deleteDateRange = (id: string) => {
@@ -948,6 +996,30 @@ export default function BookingCalculator() {
             <option value="weekday">平日價（旺季期間的平日改用平日價，小假日仍是旺季價）</option>
           </select>
           <p className="text-xs text-gray-400 mt-1">同時套用在個別租房與包棟的定價判斷。</p>
+        </div>
+
+        <div className="p-6 border-b flex flex-wrap gap-3 items-end">
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">匯入國家連假行事曆（西元年份）</label>
+            <input
+              type="number"
+              value={importYearInput}
+              onChange={(e) => setImportYearInput(e.target.value)}
+              className="w-28 px-3 py-2 border rounded-lg"
+              placeholder="2027"
+            />
+          </div>
+          <button
+            onClick={importHolidayCalendar}
+            disabled={importingHolidays}
+            className="flex items-center gap-1 bg-gray-700 text-white px-4 py-2 rounded-lg text-sm hover:bg-gray-800 disabled:opacity-50"
+          >
+            <Download className="w-4 h-4" />
+            {importingHolidays ? '匯入中...' : '匯入國家連假行事曆'}
+          </button>
+          <p className="text-xs text-gray-400 w-full">
+            資料來源：政府行政機關辦公日曆表（依規定每年 6/30 前會公告次年行事曆，特殊情形延到 8/31 前）。只會匯入有名稱的國定假日／補假區間，純週末六日不會匯入；已存在的區間會自動略過不重複新增。
+          </p>
         </div>
 
         <div className="p-6 border-b flex flex-wrap gap-3 items-end">
