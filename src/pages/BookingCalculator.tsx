@@ -418,10 +418,8 @@ export default function BookingCalculator() {
 
   return (
     <div className="max-w-6xl mx-auto space-y-6">
-      <CollapsibleSection
-        title="訂房計算機"
-        defaultOpen={false}
-        headerExtra={
+      <CollapsibleSection title="訂房計算機" defaultOpen={false}>
+        <div className="px-6 pb-6 space-y-3">
           <div className="flex flex-wrap gap-2">
             <label className="flex items-center gap-2 bg-gray-100 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-200 cursor-pointer whitespace-nowrap">
               <Upload className="w-4 h-4" />
@@ -453,12 +451,11 @@ export default function BookingCalculator() {
               {saving ? '儲存中...' : '儲存變更'}
             </button>
           </div>
-        }
-      >
-        <p className="px-6 pb-6 text-gray-500 text-sm">
-          所有變更會先暫存在畫面上，按「儲存變更」才會真正寫入瀏覽器儲存空間（不用登入、不會上傳到任何伺服器）。
-          {savedAt ? <span className="text-green-600"> 已於 {savedAt.toLocaleTimeString('zh-TW')} 儲存。</span> : null}
-        </p>
+          <p className="text-gray-500 text-sm">
+            所有變更會先暫存在畫面上，按「儲存變更」才會真正寫入瀏覽器儲存空間（不用登入、不會上傳到任何伺服器）。
+            {savedAt ? <span className="text-green-600"> 已於 {savedAt.toLocaleTimeString('zh-TW')} 儲存。</span> : null}
+          </p>
+        </div>
       </CollapsibleSection>
 
       {/* 試算報價（主要工具，固定在最上面，不收合） */}
