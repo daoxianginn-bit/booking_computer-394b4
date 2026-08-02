@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { Plus, Trash2, Home, Users, Calculator, Save, Wand2, Download, Upload } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { Plus, Trash2, Home, Users, Calculator, Save, Wand2, Download, Upload, Percent } from 'lucide-react';
 import {
   suggestRoomCombo,
   getAvailableIndividualRooms,
@@ -11,6 +11,8 @@ import {
   MultiNightQuoteResult,
 } from '../lib/bookingEngine';
 import { loadData, saveData, exportDataAsFile, parseImportedFile, BookingData } from '../lib/storage';
+import CollapsibleSection from '../components/CollapsibleSection';
+import DateRangeCalendar from '../components/DateRangeCalendar';
 
 // 房型/包棟方案定價目前支援的 tier，對應 bookingEngine.resolvePricingTier() 實際會判斷出來的級距。
 const PRICING_TIERS = ['平日', '小假日', '連假', '旺季', '定價'];
@@ -74,8 +76,11 @@ export default function BookingCalculator() {
   const [quoteCheckoutDate, setQuoteCheckoutDate] = useState('');
   const [quoteHeadcountInput, setQuoteHeadcountInput] = useState('');
   const [quotePromotionId, setQuotePromotionId] = useState<string>('');
+  const [quoteApplyConsecutiveDiscount, setQuoteApplyConsecutiveDiscount] = useState(true);
   const [quoteCleaningOption, setQuoteCleaningOption] = useState<'cleaning' | 'noCleaning'>('noCleaning');
   const [quoteResult, setQuoteResult] = useState<MultiNightQuoteResult | null>(null);
+
+  const headcountInputRef = useRef<HTMLInputElement>(null);
 
   // 晚數完全由入住/退房日期算出來，不開放手動輸入，避免跟日期兜不起來。
   const quoteNights = (() => {
@@ -255,7 +260,7 @@ export default function BookingCalculator() {
   // ---------------- 試算報價 ----------------
   const runTestQuote = () => {
     if (!quoteDate || !quoteCheckoutDate) {
-      alert('請選擇入住日期與退房日期');
+      alert('請在行事曆選擇入住日期與退房日期');
       return;
     }
     if (quoteNights <= 0) {
@@ -269,7 +274,11 @@ export default function BookingCalculator() {
     }
     const maxOccupancy = packages.length ? Math.max(...packages.map((p) => p.occupancy)) : 0;
     const selectedPromotion = promotions.find((p) => p.id === quotePromotionId) || null;
-    const consecutiveStayDiscountPerNight = quoteCleaningOption === 'cleaning' ? discountCleaning : discountNoCleaning;
+    const consecutiveStayDiscountPerNight = quoteApplyConsecutiveDiscount
+      ? quoteCleaningOption === 'cleaning'
+        ? discountCleaning
+        : discountNoCleaning
+      : 0;
     const result = computeMultiNightQuote({
       checkInDate: new Date(`${quoteDate}T00:00:00`),
       nights: quoteNights,
@@ -289,16 +298,28 @@ export default function BookingCalculator() {
     setQuoteResult(result);
   };
 
-  // 試算結果每一晚實際套用了哪個優惠：第一晚看促銷方案，第二晚起看連住折扣（依畫面目前選的打掃選項）。
+  // 試算結果每一晚實際套用了哪個優惠：第一晚看促銷方案，第二晚起看連住折扣（開關關閉就是無優惠）。
   const nightDiscountLabel = (index: number, rawPrice: number | null): string => {
     if (rawPrice == null) return '—';
     if (index === 0) {
       const promo = promotions.find((p) => p.id === quotePromotionId);
       return promo ? `促銷：${promo.name}（${promo.discount_percent}% 折扣）` : '無優惠';
     }
+    if (!quoteApplyConsecutiveDiscount) return '無優惠';
     const perNight = quoteCleaningOption === 'cleaning' ? discountCleaning : discountNoCleaning;
     const cleaningLabel = quoteCleaningOption === 'cleaning' ? '需打掃' : '無需打掃';
     return perNight > 0 ? `連住折扣・${cleaningLabel}（折抵 NT$${perNight.toLocaleString()}）` : '無優惠';
+  };
+
+  // 試算結果房型備註：個別租房顯示用到哪些房型（含容納人數），包棟顯示套用哪個人數級距的方案。
+  const individualRoomNote = (rooms: any[] | undefined): string => {
+    if (!rooms || !rooms.length) return '';
+    return `房型：${rooms.map((r) => `${r.name}（${r.capacity}人）`).join('、')}`;
+  };
+
+  const wholeHouseRoomNote = (pkg: any | undefined): string => {
+    if (!pkg) return '';
+    return `方案：${pkg.occupancy}人棟（${packageRoomNames(pkg.id)}）`;
   };
 
   // ---------------- 自動報價總表 ----------------
@@ -328,7 +349,7 @@ export default function BookingCalculator() {
     <div className="max-w-6xl mx-auto space-y-6">
       <div className="bg-white p-6 rounded-xl shadow-sm border flex flex-wrap justify-between items-start gap-4">
         <div>
-          <h2 className="text-2xl font-bold text-gray-800">房型／定價設定</h2>
+          <h2 className="text-2xl font-bold text-gray-800">訂房計算機</h2>
           <p className="text-gray-500 mt-1">
             所有變更會先暫存在畫面上，按「儲存變更」才會真正寫入瀏覽器儲存空間（不用登入、不會上傳到任何伺服器）。
             {savedAt ? <span className="text-green-600"> 已於 {savedAt.toLocaleTimeString('zh-TW')} 儲存。</span> : null}
@@ -367,17 +388,210 @@ export default function BookingCalculator() {
         </div>
       </div>
 
-      {/* 房型與定價 */}
+      {/* 試算報價（主要工具，固定在最上面，不收合） */}
       <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
-        <div className="flex justify-between items-center p-6 border-b">
+        <div className="p-6 border-b">
           <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
-            <Home className="w-5 h-5 text-blue-600" />
-            房型與定價
+            <Calculator className="w-5 h-5 text-orange-600" />
+            試算報價
           </h3>
-          <button onClick={addRoomType} className="flex items-center gap-1 bg-blue-600 text-white px-3 py-1.5 rounded-lg text-sm hover:bg-blue-700">
+          <p className="text-sm text-gray-500 mt-1">用畫面上目前（含未儲存）的資料試算，方便調整完馬上驗證，不用先儲存。</p>
+        </div>
+
+        <div className="p-6 border-b">
+          <div className="flex flex-wrap gap-8 items-start">
+            <div>
+              <label className="block text-xs text-gray-500 mb-2">點選入住日期，再點退房日期</label>
+              <DateRangeCalendar
+                startDate={quoteDate}
+                endDate={quoteCheckoutDate}
+                onChange={(start, end) => {
+                  setQuoteDate(start);
+                  setQuoteCheckoutDate(end);
+                }}
+                onRangeComplete={() => headcountInputRef.current?.focus()}
+              />
+              <p className="text-xs text-gray-500 mt-2">
+                {quoteDate && quoteCheckoutDate
+                  ? `入住 ${quoteDate}　退房 ${quoteCheckoutDate}（${quoteNights} 晚）`
+                  : quoteDate
+                  ? `已選入住 ${quoteDate}，請點選退房日期`
+                  : '請先點選入住日期'}
+              </p>
+            </div>
+
+            <div className="flex flex-wrap gap-3 items-end">
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">人數</label>
+                <input
+                  ref={headcountInputRef}
+                  type="number"
+                  value={quoteHeadcountInput}
+                  onChange={(e) => setQuoteHeadcountInput(e.target.value)}
+                  className="w-20 px-3 py-2 border rounded-lg"
+                  placeholder="請輸入"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">促銷方案</label>
+                <select value={quotePromotionId} onChange={(e) => setQuotePromotionId(e.target.value)} className="px-3 py-2 border rounded-lg bg-white">
+                  <option value="">無</option>
+                  {promotions.map((p) => (
+                    <option key={p.id} value={p.id}>{p.name}（{p.discount_percent}%）</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="flex items-center gap-2 text-xs text-gray-500 mb-1 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={quoteApplyConsecutiveDiscount}
+                    onChange={(e) => setQuoteApplyConsecutiveDiscount(e.target.checked)}
+                    className="w-4 h-4"
+                  />
+                  連住折扣
+                </label>
+                <select
+                  value={quoteCleaningOption}
+                  onChange={(e) => setQuoteCleaningOption(e.target.value as 'cleaning' | 'noCleaning')}
+                  disabled={!quoteApplyConsecutiveDiscount}
+                  className="px-3 py-2 border rounded-lg bg-white disabled:bg-gray-100 disabled:text-gray-400"
+                >
+                  <option value="noCleaning">無需打掃</option>
+                  <option value="cleaning">需打掃</option>
+                </select>
+              </div>
+              <button onClick={runTestQuote} className="flex items-center gap-1 bg-orange-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-orange-700">
+                <Calculator className="w-4 h-4" /> 試算
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {quoteResult && (
+          <div className="p-6 space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="border rounded-lg p-4">
+                <h4 className="font-semibold text-gray-700 mb-2">個別租房</h4>
+                <div className="text-sm space-y-2">
+                  {quoteResult.individual.nights.map((n, i) => (
+                    <div key={i} className="flex justify-between gap-2">
+                      <span>
+                        {n.date.toLocaleDateString('zh-TW')}（{n.tier}）{i === 0 ? '　第一晚' : `　第${i + 1}晚`}
+                        <span className="block text-xs text-gray-400">{nightDiscountLabel(i, n.rawPrice)}</span>
+                        {individualRoomNote(n.roomsUsed) && (
+                          <span className="block text-xs text-gray-400">{individualRoomNote(n.roomsUsed)}</span>
+                        )}
+                      </span>
+                      <span className="whitespace-nowrap">{n.discountedPrice == null ? '不可用' : `NT$ ${n.discountedPrice.toLocaleString()}`}</span>
+                    </div>
+                  ))}
+                  <div className="flex justify-between font-bold border-t pt-1 mt-1">
+                    <span>總計</span>
+                    <span>{quoteResult.individual.total == null ? '無法報價' : `NT$ ${quoteResult.individual.total.toLocaleString()}`}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="border rounded-lg p-4">
+                <h4 className="font-semibold text-gray-700 mb-2">包棟</h4>
+                {!wholeHouseEnabled ? (
+                  <p className="text-sm text-gray-400">目前已關閉包棟方案</p>
+                ) : (
+                  <div className="text-sm space-y-2">
+                    {quoteResult.wholeHouse.nights.map((n, i) => (
+                      <div key={i} className="flex justify-between gap-2">
+                        <span>
+                          {n.date.toLocaleDateString('zh-TW')}（{n.tier}）{i === 0 ? '　第一晚' : `　第${i + 1}晚`}
+                          <span className="block text-xs text-gray-400">{nightDiscountLabel(i, n.rawPrice)}</span>
+                          {wholeHouseRoomNote(n.packageUsed) && (
+                            <span className="block text-xs text-gray-400">{wholeHouseRoomNote(n.packageUsed)}</span>
+                          )}
+                        </span>
+                        <span className="whitespace-nowrap">{n.discountedPrice == null ? '不可用' : `NT$ ${n.discountedPrice.toLocaleString()}`}</span>
+                      </div>
+                    ))}
+                    <div className="flex justify-between font-bold border-t pt-1 mt-1">
+                      <span>總計</span>
+                      <span>{quoteResult.wholeHouse.total == null ? '無法報價' : `NT$ ${quoteResult.wholeHouse.total.toLocaleString()}`}</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+            {quoteResult.individual.total != null && quoteResult.wholeHouse.total != null && (
+              <p className="text-sm">
+                {quoteResult.individual.total < quoteResult.wholeHouse.total ? (
+                  <span className="text-xs bg-green-50 text-green-700 px-2 py-0.5 rounded">
+                    個別租房較划算，省 NT$ {(quoteResult.wholeHouse.total - quoteResult.individual.total).toLocaleString()}
+                  </span>
+                ) : quoteResult.wholeHouse.total < quoteResult.individual.total ? (
+                  <span className="text-xs bg-green-50 text-green-700 px-2 py-0.5 rounded">
+                    包棟較划算，省 NT$ {(quoteResult.individual.total - quoteResult.wholeHouse.total).toLocaleString()}
+                  </span>
+                ) : null}
+              </p>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* 促銷方案與連住折扣設定（收合、預設隱藏） */}
+      <CollapsibleSection title="促銷方案與連住折扣設定" icon={<Percent className="w-5 h-5 text-gray-600" />} defaultOpen={false}>
+        <div className="p-6 border-b">
+          <div className="flex justify-between items-center mb-3">
+            <p className="text-sm font-medium text-gray-700">促銷方案（名稱 + 折扣%，只套用在第一晚）</p>
+            <button onClick={addPromotion} className="flex items-center gap-1 bg-gray-700 text-white px-3 py-1.5 rounded-lg text-sm hover:bg-gray-800">
+              <Plus className="w-4 h-4" /> 新增方案
+            </button>
+          </div>
+          <div className="space-y-2">
+            {promotions.map((p) => (
+              <div key={p.id} className="flex items-center gap-2">
+                <input value={p.name} onChange={(e) => updatePromotion(p.id, 'name', e.target.value)} className="flex-1 px-2 py-1 border rounded" placeholder="促銷方案名稱" />
+                <input type="number" value={p.discount_percent} onChange={(e) => updatePromotion(p.id, 'discount_percent', Number(e.target.value))} className="w-20 px-2 py-1 border rounded" />
+                <span className="text-xs text-gray-400">% 折扣</span>
+                <button onClick={() => deletePromotion(p.id)} className="p-1.5 text-red-500 hover:bg-red-50 rounded">
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </div>
+            ))}
+            {promotions.length === 0 && <p className="text-sm text-gray-400">尚未設定促銷方案</p>}
+          </div>
+        </div>
+
+        <div className="p-6">
+          <p className="text-sm font-medium text-gray-700 mb-3">連住折扣（固定金額，第二晚（含）以後每晚折抵）</p>
+          <div className="flex flex-wrap gap-4 items-end">
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">需打掃，每晚折抵</label>
+              <input type="number" value={discountCleaning} onChange={(e) => setDiscountCleaning(Number(e.target.value))} className="w-32 px-3 py-2 border rounded-lg" />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">無需打掃，每晚折抵</label>
+              <input type="number" value={discountNoCleaning} onChange={(e) => setDiscountNoCleaning(Number(e.target.value))} className="w-32 px-3 py-2 border rounded-lg" />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">預設套用哪一種</label>
+              <select value={consecutiveStayDefaultOption} onChange={(e) => setConsecutiveStayDefaultOption(e.target.value as 'cleaning' | 'no_cleaning')} className="px-3 py-2 border rounded-lg bg-white">
+                <option value="no_cleaning">無需打掃</option>
+                <option value="cleaning">需打掃</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      </CollapsibleSection>
+
+      {/* 房型與定價（收合、預設隱藏） */}
+      <CollapsibleSection
+        title="房型與定價"
+        icon={<Home className="w-5 h-5 text-blue-600" />}
+        headerExtra={
+          <button onClick={addRoomType} className="flex items-center gap-1 bg-blue-600 text-white px-3 py-1.5 rounded-lg text-sm hover:bg-blue-700 whitespace-nowrap">
             <Plus className="w-4 h-4" /> 新增房型
           </button>
-        </div>
+        }
+      >
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm">
             <thead className="bg-gray-50 border-b">
@@ -487,21 +701,25 @@ export default function BookingCalculator() {
             </table>
           </div>
         </div>
-      </div>
+      </CollapsibleSection>
 
-      {/* 包棟方案與定價 */}
-      <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
-        <div className="flex justify-between items-center p-6 border-b">
-          <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
-            <Users className="w-5 h-5 text-purple-600" />
-            包棟方案與定價
-          </h3>
-          <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
+      {/* 包棟方案與定價（收合、預設隱藏） */}
+      <CollapsibleSection
+        title="包棟方案與定價"
+        icon={<Users className="w-5 h-5 text-purple-600" />}
+        headerExtra={
+          <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer whitespace-nowrap">
             啟用包棟方案
-            <input type="checkbox" checked={wholeHouseEnabled} onChange={(e) => setWholeHouseEnabled(e.target.checked)} className="w-4 h-4" />
+            <input
+              type="checkbox"
+              checked={wholeHouseEnabled}
+              onChange={(e) => setWholeHouseEnabled(e.target.checked)}
+              onClick={(e) => e.stopPropagation()}
+              className="w-4 h-4"
+            />
           </label>
-        </div>
-
+        }
+      >
         {!wholeHouseEnabled ? (
           <p className="p-6 text-sm text-gray-400">已關閉包棟方案，只會看到個別房型租房選項。開啟後可設定包棟人數級距與定價。</p>
         ) : (
@@ -715,17 +933,14 @@ export default function BookingCalculator() {
             )}
           </>
         )}
-      </div>
+      </CollapsibleSection>
 
-      {/* 日期區間 */}
-      <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
-        <div className="p-6 border-b">
-          <h3 className="text-lg font-bold text-gray-800">旺季／連假日期區間</h3>
-          <p className="text-sm text-gray-500 mt-1">
-            完全由這裡新增/編輯/刪除（優先順序：旺季 &gt; 連假 &gt; 一般日期依星期幾判斷）。
-          </p>
-        </div>
-
+      {/* 旺季／連假日期區間（收合、預設隱藏） */}
+      <CollapsibleSection
+        title="旺季／連假日期區間"
+        description="完全由這裡新增/編輯/刪除（優先順序：旺季 > 連假 > 一般日期依星期幾判斷）。"
+        defaultOpen={false}
+      >
         <div className="p-6 border-b">
           <label className="block text-xs text-gray-500 mb-1">旺季期間的平日（日~四）要套用哪種價格</label>
           <select value={peakSeasonWeekdayTier} onChange={(e) => setPeakSeasonWeekdayTier(e.target.value as 'peak' | 'weekday')} className="px-3 py-2 border rounded-lg bg-white">
@@ -806,174 +1021,7 @@ export default function BookingCalculator() {
             </tbody>
           </table>
         </div>
-      </div>
-
-      {/* 試算報價 */}
-      <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
-        <div className="p-6 border-b">
-          <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
-            <Calculator className="w-5 h-5 text-orange-600" />
-            試算報價
-          </h3>
-          <p className="text-sm text-gray-500 mt-1">用畫面上目前（含未儲存）的資料試算，方便調整完馬上驗證，不用先儲存。</p>
-        </div>
-
-        <div className="p-6 border-b">
-          <div className="flex justify-between items-center mb-3">
-            <p className="text-sm font-medium text-gray-700">促銷方案（名稱 + 折扣%，只套用在第一晚）</p>
-            <button onClick={addPromotion} className="flex items-center gap-1 bg-gray-700 text-white px-3 py-1.5 rounded-lg text-sm hover:bg-gray-800">
-              <Plus className="w-4 h-4" /> 新增方案
-            </button>
-          </div>
-          <div className="space-y-2">
-            {promotions.map((p) => (
-              <div key={p.id} className="flex items-center gap-2">
-                <input value={p.name} onChange={(e) => updatePromotion(p.id, 'name', e.target.value)} className="flex-1 px-2 py-1 border rounded" placeholder="促銷方案名稱" />
-                <input type="number" value={p.discount_percent} onChange={(e) => updatePromotion(p.id, 'discount_percent', Number(e.target.value))} className="w-20 px-2 py-1 border rounded" />
-                <span className="text-xs text-gray-400">% 折扣</span>
-                <button onClick={() => deletePromotion(p.id)} className="p-1.5 text-red-500 hover:bg-red-50 rounded">
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              </div>
-            ))}
-            {promotions.length === 0 && <p className="text-sm text-gray-400">尚未設定促銷方案</p>}
-          </div>
-        </div>
-
-        <div className="p-6 border-b">
-          <p className="text-sm font-medium text-gray-700 mb-3">連住折扣（固定金額，第二晚（含）以後每晚折抵）</p>
-          <div className="flex flex-wrap gap-4 items-end">
-            <div>
-              <label className="block text-xs text-gray-500 mb-1">需打掃，每晚折抵</label>
-              <input type="number" value={discountCleaning} onChange={(e) => setDiscountCleaning(Number(e.target.value))} className="w-32 px-3 py-2 border rounded-lg" />
-            </div>
-            <div>
-              <label className="block text-xs text-gray-500 mb-1">無需打掃，每晚折抵</label>
-              <input type="number" value={discountNoCleaning} onChange={(e) => setDiscountNoCleaning(Number(e.target.value))} className="w-32 px-3 py-2 border rounded-lg" />
-            </div>
-            <div>
-              <label className="block text-xs text-gray-500 mb-1">預設套用哪一種</label>
-              <select value={consecutiveStayDefaultOption} onChange={(e) => setConsecutiveStayDefaultOption(e.target.value as 'cleaning' | 'no_cleaning')} className="px-3 py-2 border rounded-lg bg-white">
-                <option value="no_cleaning">無需打掃</option>
-                <option value="cleaning">需打掃</option>
-              </select>
-            </div>
-          </div>
-        </div>
-
-        <div className="p-6 flex flex-wrap gap-3 items-end border-b">
-          <div>
-            <label className="block text-xs text-gray-500 mb-1">入住日期</label>
-            <input type="date" value={quoteDate} onChange={(e) => setQuoteDate(e.target.value)} className="px-3 py-2 border rounded-lg" />
-          </div>
-          <div>
-            <label className="block text-xs text-gray-500 mb-1">退房日期</label>
-            <input
-              type="date"
-              value={quoteCheckoutDate}
-              onChange={(e) => setQuoteCheckoutDate(e.target.value)}
-              min={quoteDate || undefined}
-              className="px-3 py-2 border rounded-lg"
-            />
-          </div>
-          <div>
-            <label className="block text-xs text-gray-500 mb-1">晚數（自動計算）</label>
-            <div className="w-20 px-3 py-2 border rounded-lg bg-gray-50 text-gray-600 text-center">
-              {quoteNights > 0 ? `${quoteNights} 晚` : '—'}
-            </div>
-          </div>
-          <div>
-            <label className="block text-xs text-gray-500 mb-1">人數</label>
-            <input
-              type="number"
-              value={quoteHeadcountInput}
-              onChange={(e) => setQuoteHeadcountInput(e.target.value)}
-              className="w-20 px-3 py-2 border rounded-lg"
-              placeholder="請輸入"
-            />
-          </div>
-          <div>
-            <label className="block text-xs text-gray-500 mb-1">促銷方案</label>
-            <select value={quotePromotionId} onChange={(e) => setQuotePromotionId(e.target.value)} className="px-3 py-2 border rounded-lg bg-white">
-              <option value="">無</option>
-              {promotions.map((p) => (
-                <option key={p.id} value={p.id}>{p.name}（{p.discount_percent}%）</option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="block text-xs text-gray-500 mb-1">第二晚起（連住折扣）</label>
-            <select value={quoteCleaningOption} onChange={(e) => setQuoteCleaningOption(e.target.value as 'cleaning' | 'noCleaning')} className="px-3 py-2 border rounded-lg bg-white">
-              <option value="noCleaning">無需打掃</option>
-              <option value="cleaning">需打掃</option>
-            </select>
-          </div>
-          <button onClick={runTestQuote} className="flex items-center gap-1 bg-orange-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-orange-700">
-            <Calculator className="w-4 h-4" /> 試算
-          </button>
-        </div>
-
-        {quoteResult && (
-          <div className="p-6 space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="border rounded-lg p-4">
-                <h4 className="font-semibold text-gray-700 mb-2">個別租房</h4>
-                <div className="text-sm space-y-1">
-                  {quoteResult.individual.nights.map((n, i) => (
-                    <div key={i} className="flex justify-between gap-2">
-                      <span>
-                        {n.date.toLocaleDateString('zh-TW')}（{n.tier}）{i === 0 ? '　第一晚' : `　第${i + 1}晚`}
-                        <span className="block text-xs text-gray-400">{nightDiscountLabel(i, n.rawPrice)}</span>
-                      </span>
-                      <span className="whitespace-nowrap">{n.discountedPrice == null ? '不可用' : `NT$ ${n.discountedPrice.toLocaleString()}`}</span>
-                    </div>
-                  ))}
-                  <div className="flex justify-between font-bold border-t pt-1 mt-1">
-                    <span>總計</span>
-                    <span>{quoteResult.individual.total == null ? '無法報價' : `NT$ ${quoteResult.individual.total.toLocaleString()}`}</span>
-                  </div>
-                </div>
-              </div>
-
-              <div className="border rounded-lg p-4">
-                <h4 className="font-semibold text-gray-700 mb-2">包棟</h4>
-                {!wholeHouseEnabled ? (
-                  <p className="text-sm text-gray-400">目前已關閉包棟方案</p>
-                ) : (
-                  <div className="text-sm space-y-1">
-                    {quoteResult.wholeHouse.nights.map((n, i) => (
-                      <div key={i} className="flex justify-between gap-2">
-                        <span>
-                          {n.date.toLocaleDateString('zh-TW')}（{n.tier}）{i === 0 ? '　第一晚' : `　第${i + 1}晚`}
-                          <span className="block text-xs text-gray-400">{nightDiscountLabel(i, n.rawPrice)}</span>
-                        </span>
-                        <span className="whitespace-nowrap">{n.discountedPrice == null ? '不可用' : `NT$ ${n.discountedPrice.toLocaleString()}`}</span>
-                      </div>
-                    ))}
-                    <div className="flex justify-between font-bold border-t pt-1 mt-1">
-                      <span>總計</span>
-                      <span>{quoteResult.wholeHouse.total == null ? '無法報價' : `NT$ ${quoteResult.wholeHouse.total.toLocaleString()}`}</span>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-            {quoteResult.individual.total != null && quoteResult.wholeHouse.total != null && (
-              <p className="text-sm">
-                {quoteResult.individual.total < quoteResult.wholeHouse.total ? (
-                  <span className="text-xs bg-green-50 text-green-700 px-2 py-0.5 rounded">
-                    個別租房較划算，省 NT$ {(quoteResult.wholeHouse.total - quoteResult.individual.total).toLocaleString()}
-                  </span>
-                ) : quoteResult.wholeHouse.total < quoteResult.individual.total ? (
-                  <span className="text-xs bg-green-50 text-green-700 px-2 py-0.5 rounded">
-                    包棟較划算，省 NT$ {(quoteResult.individual.total - quoteResult.wholeHouse.total).toLocaleString()}
-                  </span>
-                ) : null}
-              </p>
-            )}
-          </div>
-        )}
-      </div>
+      </CollapsibleSection>
     </div>
   );
 }

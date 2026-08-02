@@ -424,6 +424,8 @@ export interface NightlyPrice {
   tier: string;
   rawPrice: number | null; // 該晚原始價格（尚未套用促銷/連住折扣），null＝當晚這個方案不可用
   discountedPrice: number | null;
+  roomsUsed?: AvailableRoom[]; // 個別租房：當晚最便宜選項實際用到的房型
+  packageUsed?: WholeHousePackage; // 包棟：當晚最便宜選項套用的方案級距
 }
 
 export interface MultiNightOption {
@@ -456,20 +458,31 @@ export interface MultiNightQuoteResult {
   wholeHouse: MultiNightOption;
 }
 
+interface IndividualNightResult {
+  price: number;
+  rooms: AvailableRoom[]; // 這個選項實際用到的房型
+}
+
 function cheapestIndividualNightPrice(
   tier: string,
   headcount: number,
   roomTypes: RoomType[],
   roomPricing: RoomPricing[],
   roomExtraPersonPricing: RoomExtraPersonPricing[]
-): number | null {
+): IndividualNightResult | null {
   const availableRooms = getAvailableIndividualRooms(tier, roomTypes, roomPricing, roomExtraPersonPricing);
   if (!availableRooms.length) return null;
   const options = computeIndividualOptions(headcount, availableRooms);
-  const candidates: number[] = [];
-  if (options.openRoomOption.success) candidates.push(options.openRoomOption.totalPrice);
-  if (options.extraPersonOption) candidates.push(options.extraPersonOption.totalPrice);
-  return candidates.length ? Math.min(...candidates) : null;
+  const candidates: IndividualNightResult[] = [];
+  if (options.openRoomOption.success) candidates.push({ price: options.openRoomOption.totalPrice, rooms: options.openRoomOption.rooms });
+  if (options.extraPersonOption) candidates.push({ price: options.extraPersonOption.totalPrice, rooms: options.extraPersonOption.baseRooms });
+  if (!candidates.length) return null;
+  return candidates.reduce((a, b) => (b.price < a.price ? b : a));
+}
+
+interface WholeHouseNightResult {
+  price: number;
+  package: WholeHousePackage; // 這個選項實際套用的方案級距
 }
 
 function cheapestWholeHouseNightPrice(
@@ -479,15 +492,17 @@ function cheapestWholeHouseNightPrice(
   packagePricing: WholeHousePackagePricing[],
   extraPersonRules: ExtraPersonRule[],
   maxOccupancy: number
-): number | null {
-  const candidates: number[] = [];
+): WholeHouseNightResult | null {
+  const candidates: WholeHouseNightResult[] = [];
   const base = selectWholeHousePackage(headcount, packages, packagePricing, extraPersonRules, tier, maxOccupancy);
   if (base) {
-    candidates.push(base.extraPersonOptions.length ? Math.min(...base.extraPersonOptions.map((o) => o.grandTotal)) : base.basePrice);
+    const price = base.extraPersonOptions.length ? Math.min(...base.extraPersonOptions.map((o) => o.grandTotal)) : base.basePrice;
+    candidates.push({ price, package: base.package });
   }
   const upgrade = selectWholeHouseUpgradeOption(headcount, packages, packagePricing, tier);
-  if (upgrade) candidates.push(upgrade.price);
-  return candidates.length ? Math.min(...candidates) : null;
+  if (upgrade) candidates.push({ price: upgrade.price, package: upgrade.package });
+  if (!candidates.length) return null;
+  return candidates.reduce((a, b) => (b.price < a.price ? b : a));
 }
 
 /**
@@ -519,8 +534,20 @@ export function computeMultiNightQuote(input: MultiNightQuoteInput): MultiNightQ
     const individualRaw = cheapestIndividualNightPrice(tier, input.headcount, input.roomTypes, input.roomPricing, input.roomExtraPersonPricing);
     const wholeHouseRaw = cheapestWholeHouseNightPrice(tier, input.headcount, input.packages, input.packagePricing, input.extraPersonRules, input.maxOccupancy);
 
-    individualNights.push({ date, tier, rawPrice: individualRaw, discountedPrice: applyDiscounts(individualRaw) });
-    wholeHouseNights.push({ date, tier, rawPrice: wholeHouseRaw, discountedPrice: applyDiscounts(wholeHouseRaw) });
+    individualNights.push({
+      date,
+      tier,
+      rawPrice: individualRaw?.price ?? null,
+      discountedPrice: applyDiscounts(individualRaw?.price ?? null),
+      roomsUsed: individualRaw?.rooms,
+    });
+    wholeHouseNights.push({
+      date,
+      tier,
+      rawPrice: wholeHouseRaw?.price ?? null,
+      discountedPrice: applyDiscounts(wholeHouseRaw?.price ?? null),
+      packageUsed: wholeHouseRaw?.package,
+    });
   }
 
   const sumOrNull = (nights: NightlyPrice[]): number | null =>
