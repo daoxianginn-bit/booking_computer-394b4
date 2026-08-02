@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Plus, Trash2, Home, Users, Calculator, Save, Wand2, Download, Upload, Percent } from 'lucide-react';
+import { Plus, Trash2, Home, Users, Calculator, Save, Wand2, Download, Upload, Percent, ChevronDown, CalendarDays } from 'lucide-react';
 import {
   suggestRoomCombo,
   getAvailableIndividualRooms,
@@ -83,6 +83,8 @@ export default function BookingCalculator() {
   const [quoteResult, setQuoteResult] = useState<MultiNightQuoteResult | null>(null);
 
   const headcountInputRef = useRef<HTMLInputElement>(null);
+  // 行事曆預設收合成一行摘要，選完日期後自動收回，讓手機上「條件選擇＋計算結果」盡量擠在同一頁內看得到。
+  const [calendarOpen, setCalendarOpen] = useState(false);
 
   // 晚數完全由入住/退房日期算出來，不開放手動輸入，避免跟日期兜不起來。
   const quoteNights = (() => {
@@ -287,6 +289,27 @@ export default function BookingCalculator() {
     }
   };
 
+  // 匯入旺季日期：固定套用暑假旺季區間 07/01～08/31，年份跟「匯入國家連假行事曆」共用同一個輸入框。
+  const importPeakSeasonDates = () => {
+    const year = Number(importYearInput);
+    if (!year || year < 2000 || year > 2100) {
+      alert('請輸入有效的西元年份，例如 2027');
+      return;
+    }
+    const start = `${year}-07-01`;
+    const end = `${year}-08-31`;
+    if (dateRanges.some((d) => d.range_type === '旺季' && d.start_date === start && d.end_date === end)) {
+      alert(`${year} 年 07/01～08/31 的旺季區間已經存在，未重複新增。`);
+      return;
+    }
+    setDateRanges(
+      [...dateRanges, { id: newId(), range_type: '旺季', start_date: start, end_date: end, label: `${year}年暑假旺季` }].sort((a, b) =>
+        a.start_date.localeCompare(b.start_date)
+      )
+    );
+    alert(`已新增 ${year}/07/01～${year}/08/31 旺季區間。`);
+  };
+
   const deleteDateRange = (id: string) => {
     setDateRanges(dateRanges.filter((d) => d.id !== id));
   };
@@ -395,46 +418,48 @@ export default function BookingCalculator() {
 
   return (
     <div className="max-w-6xl mx-auto space-y-6">
-      <div className="bg-white p-6 rounded-xl shadow-sm border flex flex-wrap justify-between items-start gap-4">
-        <div>
-          <h2 className="text-2xl font-bold text-gray-800">訂房計算機</h2>
-          <p className="text-gray-500 mt-1">
-            所有變更會先暫存在畫面上，按「儲存變更」才會真正寫入瀏覽器儲存空間（不用登入、不會上傳到任何伺服器）。
-            {savedAt ? <span className="text-green-600"> 已於 {savedAt.toLocaleTimeString('zh-TW')} 儲存。</span> : null}
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <label className="flex items-center gap-2 bg-gray-100 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-200 cursor-pointer whitespace-nowrap">
-            <Upload className="w-4 h-4" />
-            匯入設定
-            <input
-              type="file"
-              accept="application/json"
-              className="hidden"
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (file) handleImportFile(file);
-                e.target.value = '';
-              }}
-            />
-          </label>
-          <button
-            onClick={handleExport}
-            className="flex items-center gap-2 bg-gray-100 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-200 whitespace-nowrap"
-          >
-            <Download className="w-4 h-4" />
-            匯出備份
-          </button>
-          <button
-            onClick={handleSaveAll}
-            disabled={saving}
-            className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 disabled:opacity-50 whitespace-nowrap"
-          >
-            <Save className="w-4 h-4" />
-            {saving ? '儲存中...' : '儲存變更'}
-          </button>
-        </div>
-      </div>
+      <CollapsibleSection
+        title="訂房計算機"
+        defaultOpen={false}
+        headerExtra={
+          <div className="flex flex-wrap gap-2">
+            <label className="flex items-center gap-2 bg-gray-100 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-200 cursor-pointer whitespace-nowrap">
+              <Upload className="w-4 h-4" />
+              匯入設定
+              <input
+                type="file"
+                accept="application/json"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) handleImportFile(file);
+                  e.target.value = '';
+                }}
+              />
+            </label>
+            <button
+              onClick={handleExport}
+              className="flex items-center gap-2 bg-gray-100 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-200 whitespace-nowrap"
+            >
+              <Download className="w-4 h-4" />
+              匯出備份
+            </button>
+            <button
+              onClick={handleSaveAll}
+              disabled={saving}
+              className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 disabled:opacity-50 whitespace-nowrap"
+            >
+              <Save className="w-4 h-4" />
+              {saving ? '儲存中...' : '儲存變更'}
+            </button>
+          </div>
+        }
+      >
+        <p className="px-6 pb-6 text-gray-500 text-sm">
+          所有變更會先暫存在畫面上，按「儲存變更」才會真正寫入瀏覽器儲存空間（不用登入、不會上傳到任何伺服器）。
+          {savedAt ? <span className="text-green-600"> 已於 {savedAt.toLocaleTimeString('zh-TW')} 儲存。</span> : null}
+        </p>
+      </CollapsibleSection>
 
       {/* 試算報價（主要工具，固定在最上面，不收合） */}
       <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
@@ -446,70 +471,86 @@ export default function BookingCalculator() {
           <p className="text-sm text-gray-500 mt-1">用畫面上目前（含未儲存）的資料試算，方便調整完馬上驗證，不用先儲存。</p>
         </div>
 
-        <div className="p-6 border-b">
-          <div className="flex flex-wrap gap-8 items-start">
-            <div>
-              <label className="block text-xs text-gray-500 mb-2">點選入住日期，再點退房日期</label>
-              <DateRangeCalendar
-                startDate={quoteDate}
-                endDate={quoteCheckoutDate}
-                onChange={(start, end) => {
-                  setQuoteDate(start);
-                  setQuoteCheckoutDate(end);
-                }}
-                onRangeComplete={() => headcountInputRef.current?.focus()}
-              />
-              <p className="text-xs text-gray-500 mt-2">
-                {quoteDate && quoteCheckoutDate
-                  ? `入住 ${quoteDate}　退房 ${quoteCheckoutDate}（${quoteNights} 晚）`
-                  : quoteDate
-                  ? `已選入住 ${quoteDate}，請點選退房日期`
-                  : '請先點選入住日期'}
-              </p>
-            </div>
-
-            <div className="flex flex-wrap gap-3 items-end">
-              <div>
-                <label className="block text-xs text-gray-500 mb-1">人數</label>
-                <input
-                  ref={headcountInputRef}
-                  type="number"
-                  value={quoteHeadcountInput}
-                  onChange={(e) => setQuoteHeadcountInput(e.target.value)}
-                  className="w-20 px-3 py-2 border rounded-lg"
-                  placeholder="請輸入"
+        <div className="p-6 border-b space-y-4">
+          <div>
+            <button
+              type="button"
+              onClick={() => setCalendarOpen((v) => !v)}
+              className="w-full flex items-center justify-between gap-2 px-4 py-3 border rounded-lg text-left hover:bg-gray-50"
+            >
+              <span className="flex items-center gap-2 text-sm text-gray-700 min-w-0">
+                <CalendarDays className="w-4 h-4 text-gray-400 shrink-0" />
+                <span className="truncate">
+                  {quoteDate && quoteCheckoutDate
+                    ? `入住 ${quoteDate}　退房 ${quoteCheckoutDate}（${quoteNights} 晚）`
+                    : quoteDate
+                    ? `已選入住 ${quoteDate}，請點選退房日期`
+                    : '點此選擇入住／退房日期'}
+                </span>
+              </span>
+              <ChevronDown className={`w-4 h-4 text-gray-400 shrink-0 transition-transform ${calendarOpen ? 'rotate-180' : ''}`} />
+            </button>
+            {calendarOpen && (
+              <div className="mt-3 p-3 border rounded-lg">
+                <DateRangeCalendar
+                  startDate={quoteDate}
+                  endDate={quoteCheckoutDate}
+                  onChange={(start, end) => {
+                    setQuoteDate(start);
+                    setQuoteCheckoutDate(end);
+                  }}
+                  onRangeComplete={() => {
+                    setCalendarOpen(false);
+                    headcountInputRef.current?.focus();
+                  }}
                 />
               </div>
-              <div>
-                <label className="block text-xs text-gray-500 mb-1">促銷方案</label>
-                <select value={quotePromotionId} onChange={(e) => setQuotePromotionId(e.target.value)} className="px-3 py-2 border rounded-lg bg-white">
-                  <option value="">無</option>
-                  {promotions.map((p) => (
-                    <option key={p.id} value={p.id}>{p.name}（{p.discount_percent}%）</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="flex items-center gap-2 text-xs text-gray-500 mb-1 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={quoteApplyConsecutiveDiscount}
-                    onChange={(e) => setQuoteApplyConsecutiveDiscount(e.target.checked)}
-                    className="w-4 h-4"
-                  />
-                  連住折扣
-                </label>
-                <select
-                  value={quoteCleaningOption}
-                  onChange={(e) => setQuoteCleaningOption(e.target.value as 'cleaning' | 'noCleaning')}
-                  disabled={!quoteApplyConsecutiveDiscount}
-                  className="px-3 py-2 border rounded-lg bg-white disabled:bg-gray-100 disabled:text-gray-400"
-                >
-                  <option value="noCleaning">無需打掃</option>
-                  <option value="cleaning">需打掃</option>
-                </select>
-              </div>
-              <button onClick={runTestQuote} className="flex items-center gap-1 bg-orange-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-orange-700">
+            )}
+          </div>
+
+          <div className="grid grid-cols-2 gap-3 sm:flex sm:flex-wrap sm:items-end">
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">人數</label>
+              <input
+                ref={headcountInputRef}
+                type="number"
+                value={quoteHeadcountInput}
+                onChange={(e) => setQuoteHeadcountInput(e.target.value)}
+                className="w-full sm:w-20 px-3 py-2 border rounded-lg"
+                placeholder="請輸入"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">促銷方案</label>
+              <select value={quotePromotionId} onChange={(e) => setQuotePromotionId(e.target.value)} className="w-full sm:w-auto px-3 py-2 border rounded-lg bg-white">
+                <option value="">無</option>
+                {promotions.map((p) => (
+                  <option key={p.id} value={p.id}>{p.name}（{p.discount_percent}%）</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="flex items-center gap-2 text-xs text-gray-500 mb-1 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={quoteApplyConsecutiveDiscount}
+                  onChange={(e) => setQuoteApplyConsecutiveDiscount(e.target.checked)}
+                  className="w-4 h-4"
+                />
+                連住折扣
+              </label>
+              <select
+                value={quoteCleaningOption}
+                onChange={(e) => setQuoteCleaningOption(e.target.value as 'cleaning' | 'noCleaning')}
+                disabled={!quoteApplyConsecutiveDiscount}
+                className="w-full sm:w-auto px-3 py-2 border rounded-lg bg-white disabled:bg-gray-100 disabled:text-gray-400"
+              >
+                <option value="noCleaning">無需打掃</option>
+                <option value="cleaning">需打掃</option>
+              </select>
+            </div>
+            <div className="flex items-end">
+              <button onClick={runTestQuote} className="w-full sm:w-auto flex items-center justify-center gap-1 bg-orange-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-orange-700">
                 <Calculator className="w-4 h-4" /> 試算
               </button>
             </div>
@@ -998,27 +1039,35 @@ export default function BookingCalculator() {
           <p className="text-xs text-gray-400 mt-1">同時套用在個別租房與包棟的定價判斷。</p>
         </div>
 
-        <div className="p-6 border-b flex flex-wrap gap-3 items-end">
-          <div>
-            <label className="block text-xs text-gray-500 mb-1">匯入國家連假行事曆（西元年份）</label>
-            <input
-              type="number"
-              value={importYearInput}
-              onChange={(e) => setImportYearInput(e.target.value)}
-              className="w-28 px-3 py-2 border rounded-lg"
-              placeholder="2027"
-            />
+        <div className="p-6 border-b">
+          <label className="block text-xs text-gray-500 mb-1">匯入年份（西元），下面兩個匯入按鈕共用這個年份</label>
+          <input
+            type="number"
+            value={importYearInput}
+            onChange={(e) => setImportYearInput(e.target.value)}
+            className="w-28 px-3 py-2 border rounded-lg"
+            placeholder="2027"
+          />
+          <div className="flex flex-wrap gap-2 mt-3">
+            <button
+              onClick={importHolidayCalendar}
+              disabled={importingHolidays}
+              className="flex items-center gap-1 bg-gray-700 text-white px-4 py-2 rounded-lg text-sm hover:bg-gray-800 disabled:opacity-50"
+            >
+              <Download className="w-4 h-4" />
+              {importingHolidays ? '匯入中...' : '匯入國家連假行事曆'}
+            </button>
+            <button
+              onClick={importPeakSeasonDates}
+              className="flex items-center gap-1 bg-gray-700 text-white px-4 py-2 rounded-lg text-sm hover:bg-gray-800"
+            >
+              <Download className="w-4 h-4" />
+              匯入旺季日期（07/01～08/31）
+            </button>
           </div>
-          <button
-            onClick={importHolidayCalendar}
-            disabled={importingHolidays}
-            className="flex items-center gap-1 bg-gray-700 text-white px-4 py-2 rounded-lg text-sm hover:bg-gray-800 disabled:opacity-50"
-          >
-            <Download className="w-4 h-4" />
-            {importingHolidays ? '匯入中...' : '匯入國家連假行事曆'}
-          </button>
-          <p className="text-xs text-gray-400 w-full">
-            資料來源：政府行政機關辦公日曆表（依規定每年 6/30 前會公告次年行事曆，特殊情形延到 8/31 前）。只會匯入有名稱的國定假日／補假區間，純週末六日不會匯入；已存在的區間會自動略過不重複新增。
+          <p className="text-xs text-gray-400 mt-3">
+            連假資料來源：政府行政機關辦公日曆表（依規定每年 6/30 前會公告次年行事曆，特殊情形延到 8/31 前）。只會匯入有名稱的國定假日／補假區間，純週末六日不會匯入。
+            旺季固定匯入該年 07/01～08/31 一段區間，兩者都會自動略過已存在的區間，不會重複新增。
           </p>
         </div>
 
